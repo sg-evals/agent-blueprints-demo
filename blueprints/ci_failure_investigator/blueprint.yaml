@@ -1,0 +1,95 @@
+name: ci_failure_investigator
+version: "1.0"
+description: >
+  Investigates CI test failures by fetching logs, querying Sourcegraph
+  Deep Search and MCP tools, and posting a root-cause analysis comment
+  on the failing commit.
+
+trigger:
+  provider: github
+  event: workflow_run.completed
+  conditions:
+    conclusion: failure
+
+inputs:
+  repo: string
+  commit_sha: string
+  branch: string
+  workflow_run_id: number
+
+workflow:
+  - step: fetch_ci_context
+    description: Fetch CI workflow logs and extract failing test information
+    action: github.get_workflow_logs
+    params:
+      workflow_run_id: "{{ inputs.workflow_run_id }}"
+    outputs:
+      failing_test: string
+      error_message: string
+      failing_package: string
+
+  - step: summarize_failure
+    description: Parse and structure the failure information
+    action: internal.parse_failure
+    params:
+      logs: "{{ steps.fetch_ci_context.logs }}"
+    outputs:
+      test_name: string
+      error_summary: string
+      package_path: string
+
+  - step: deepsearch_investigation
+    description: Use Sourcegraph Deep Search to investigate the failure
+    action: sourcegraph.deep_search
+    params:
+      query: >
+        Investigate why {{ steps.summarize_failure.test_name }} fails.
+        The error is: {{ steps.summarize_failure.error_summary }}.
+        Look for the root cause in the codebase.
+      repo: "{{ inputs.repo }}"
+    outputs:
+      summary: string
+      relevant_files: list
+      relevant_symbols: list
+
+  - step: mcp_expand_symbols
+    description: Use MCP tools to get precise symbol definitions and references
+    action: sourcegraph.mcp_expand
+    params:
+      repo: "{{ inputs.repo }}"
+      files: "{{ steps.deepsearch_investigation.relevant_files }}"
+      symbols: "{{ steps.deepsearch_investigation.relevant_symbols }}"
+    outputs:
+      definitions: list
+      references: list
+      file_contents: list
+
+  - step: compose_output
+    description: Generate the investigation summary
+    action: llm.investigate
+    params:
+      failing_test: "{{ steps.summarize_failure.test_name }}"
+      error_message: "{{ steps.summarize_failure.error_summary }}"
+      relevant_files: "{{ steps.mcp_expand_symbols.file_contents }}"
+      deep_search_summary: "{{ steps.deepsearch_investigation.summary }}"
+      symbol_definitions: "{{ steps.mcp_expand_symbols.definitions }}"
+    outputs:
+      root_cause: string
+      suggested_fix: string
+      confidence: string
+      relevant_file_paths: list
+
+  - step: publish_github_comment
+    description: Post the investigation results as a GitHub commit comment
+    action: github.post_commit_comment
+    params:
+      sha: "{{ inputs.commit_sha }}"
+      body: "{{ steps.compose_output }}"
+
+outputs:
+  github_comment: true
+  format: markdown
+
+metadata:
+  author: agent-blueprints
+  tags: [ci, testing, investigation, go]

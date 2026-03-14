@@ -1,0 +1,34 @@
+name = "agent-blueprints-demo"
+main = "workers/webhook-ingress/index.ts"
+compatibility_date = "2024-01-01"
+
+# Webhook ingress worker
+[triggers]
+crons = []
+
+# Queue binding
+[[queues.producers]]
+queue = "investigation-queue"
+binding = "INVESTIGATION_QUEUE"
+
+# Queue consumer
+[[queues.consumers]]
+queue = "investigation-queue"
+max_batch_size = 1
+max_retries = 3
+dead_letter_queue = "investigation-dlq"
+
+# Durable Objects
+[durable_objects]
+bindings = [
+  { name = "INVESTIGATION_RUNS", class_name = "InvestigationRun" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["InvestigationRun"]
+
+# Environment variables (secrets set via wrangler secret)
+[vars]
+DEMO_MODE = "true"
+SOURCEGRAPH_MCP_ENDPOINT = "https://sourcegraph.sourcegraph.com/.api/mcp/v1"

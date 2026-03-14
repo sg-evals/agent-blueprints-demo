@@ -1,0 +1,42 @@
+id: ci-failure-001
+name: Retry backoff negative duration
+description: >
+  retryBackoff returns negative delay when attempt == 0 due to
+  removed attempt clamp and simplified linear formula.
+
+branch: demo/ci-failure-001
+baseline_branch: demo/baseline
+
+expected:
+  failing_test: TestRetryBackoffZero
+  failing_package: apps/worker-reconcile
+  error_message: "attempt 0 produced invalid backoff: invalid negative backoff delay: -100ms"
+
+  root_cause:
+    file: libs/retry/backoff.go
+    function: RetryBackoff
+    description: >
+      RetryBackoff was simplified from exponential to linear backoff using
+      (attempt-1) * baseDelay, but the attempt-clamping guard (if attempt < 1)
+      was removed. When attempt=0, the formula yields -1 * baseDelay = -100ms.
+
+  suggested_fix: >
+    Restore the attempt clamp: if attempt < 1 { attempt = 1 } before the
+    delay calculation, or switch back to exponential backoff.
+
+  confidence: medium
+
+  relevant_files:
+    - libs/retry/backoff.go
+    - libs/retry/backoff_test.go
+    - apps/worker-reconcile/reconcile.go
+    - apps/worker-reconcile/reconcile_test.go
+
+  sourcegraph_queries:
+    deep_search: >
+      Investigate why retryBackoff returns negative duration when attempt is 0
+      in the retry library
+    keyword_search:
+      - "RetryBackoff"
+      - "attempt.*backoff"
+      - "negative.*delay"
