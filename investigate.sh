@@ -6,7 +6,7 @@
 #
 # Prerequisites:
 #   SOURCEGRAPH_ACCESS_TOKEN - for MCP tools
-#   ANTHROPIC_API_KEY        - for Claude Code
+#   Claude Code authenticated (OAuth or ANTHROPIC_API_KEY)
 #   GITHUB_TOKEN             - for posting comments (optional)
 set -euo pipefail
 
@@ -81,13 +81,17 @@ MCP_TOOLS="$MCP_TOOLS,mcp__sourcegraph__sg_list_files"
 MCP_TOOLS="$MCP_TOOLS,mcp__sourcegraph__sg_go_to_definition"
 MCP_TOOLS="$MCP_TOOLS,mcp__sourcegraph__sg_find_references"
 MCP_TOOLS="$MCP_TOOLS,mcp__sourcegraph__sg_commit_search"
+MCP_TOOLS="$MCP_TOOLS,mcp__sourcegraph__sg_deepsearch"
 ALLOWED_TOOLS="Read,Write,Grep,Glob,$MCP_TOOLS"
 
 # Run Claude Code agent
 cd "$SCRIPT_DIR"
+rm -f investigation_output.md
+
 claude --print \
+  --model sonnet \
   --allowedTools "$ALLOWED_TOOLS" \
-  --prompt "$PROMPT"
+  "$PROMPT"
 
 # Check if output was generated
 if [ ! -f "$SCRIPT_DIR/investigation_output.md" ]; then
