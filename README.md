@@ -1,166 +1,114 @@
 # Agent Blueprints Demo
 
-Deterministic demo of background coding agents powered by **Sourcegraph Deep Search** and **MCP**.
+Background coding agent that investigates CI failures using **Claude Code** + **Sourcegraph MCP**.
 
-An agent automatically investigates CI test failures, identifies root causes via code search, and posts analysis as GitHub comments.
+When a test fails in CI, the agent automatically:
+1. Uses Sourcegraph MCP tools to search the codebase
+2. Traces the failing test to its root cause
+3. Posts an investigation report as a GitHub comment
 
 ## Architecture
 
 ```
-GitHub CI failure
+CI fails (GitHub Actions)
     │
     ▼
-Cloudflare Worker (webhook-ingress)
-    │  validates signature, filters failures
-    ▼
-Cloudflare Queue
+investigate.yml triggers
     │
     ▼
-Cloudflare Worker (queue-consumer)
-    │  fetches CI logs
-    │  queries Sourcegraph Deep Search
-    │  expands symbols via MCP
-    │  generates investigation summary
+Claude Code agent launches
+    │  with .mcp.json → Sourcegraph MCP server
+    │
+    ├── sg_keyword_search  → find the failing test
+    ├── sg_read_file       → read test + implementation
+    ├── sg_go_to_definition → trace the code under test
+    ├── sg_commit_search   → find what changed
+    │
     ▼
-GitHub commit comment
+investigation_output.md → GitHub commit comment
 ```
 
-## Quick Start — Local Demo
+No custom infrastructure. No Cloudflare. The agent is Claude Code with Sourcegraph MCP configured via `.mcp.json`.
+
+## Quick Start
 
 ```bash
-# 1. Install dependencies
-cd agent-blueprints-demo
-npm install
-
-# 2. Run preflight checks
-bash demo/preflight.sh
-
-# 3. Run the full local demo (no external services needed)
+# Run the demo (with or without credentials)
 bash demo/local_demo.sh
+
+# Run a live investigation
+export SOURCEGRAPH_ACCESS_TOKEN="sgp_..."
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+./investigate.sh \
+  --repo sg-evals/agent-blueprints-demo-monorepo \
+  --test TestRetryBackoffZero \
+  --error "invalid negative backoff delay: -100ms"
 ```
 
-## Project Structure
+## Files
 
 ```
 agent-blueprints-demo/
-├── workers/
-│   ├── webhook-ingress/     # Receives GitHub webhooks
-│   └── queue-consumer/      # Processes investigation jobs
-├── durable_objects/
-│   └── investigation_run.ts # Per-investigation state
-├── runtime/
-│   ├── github/              # GitHub API client
-│   ├── sourcegraph/         # Deep Search + MCP client
-│   ├── llm/                 # Claude API (demo mode fallback)
-│   ├── blueprint/           # Blueprint loader + executor
-│   ├── output/              # Comment formatter
-│   └── state/               # Investigation state management
+├── .mcp.json              # Sourcegraph MCP server config
+├── CLAUDE.md              # Agent investigation instructions
+├── investigate.sh         # Launches Claude Code with MCP
 ├── blueprints/
 │   └── ci_failure_investigator/
-│       ├── blueprint.yaml   # Declarative workflow
-│       └── scenarios/       # Deterministic test scenarios
-├── demo/
-│   ├── local_demo.sh        # Full local demo (no external services)
-│   ├── run_demo.sh          # Live demo (pushes to GitHub)
-│   ├── reset_demo.sh        # Reset demo state
-│   ├── simulate_webhook.sh  # Local webhook testing
-│   ├── verify_sourcegraph.sh # Sourcegraph API verification
-│   └── preflight.sh         # Prerequisite checker
-├── wrangler.toml             # Cloudflare Workers config
-├── package.json
-└── tsconfig.json
+│       ├── blueprint.yaml     # Declarative workflow definition
+│       └── scenarios/         # Deterministic test scenarios
+└── demo/
+    ├── local_demo.sh      # Full local demo
+    ├── preflight.sh       # Prerequisite checker
+    ├── run_demo.sh        # Live demo (pushes to GitHub)
+    └── reset_demo.sh      # Reset demo state
 ```
 
-## Demo Scenario: ci-failure-001
+## How It Works
+
+### MCP Configuration (`.mcp.json`)
+
+```json
+{
+  "mcpServers": {
+    "sourcegraph": {
+      "type": "http",
+      "url": "https://sourcegraph.sourcegraph.com/.api/mcp/v1",
+      "headers": { "Authorization": "token ${SOURCEGRAPH_ACCESS_TOKEN}" }
+    }
+  }
+}
+```
+
+This gives Claude Code access to all Sourcegraph MCP tools:
+- `mcp__sourcegraph__sg_keyword_search` — exact symbol search
+- `mcp__sourcegraph__sg_nls_search` — semantic search
+- `mcp__sourcegraph__sg_read_file` — read indexed files
+- `mcp__sourcegraph__sg_go_to_definition` — symbol navigation
+- `mcp__sourcegraph__sg_find_references` — cross-repo references
+- `mcp__sourcegraph__sg_commit_search` — git history
+
+### Automated CI Trigger
+
+The monorepo has `.github/workflows/investigate.yml` that fires when CI fails:
+
+```
+workflow_run (CI Fast, completed, failure)
+  → checkout agent-blueprints-demo
+  → extract failing test from CI logs
+  → run investigate.sh with Claude Code + MCP
+  → post investigation as GitHub commit comment
+```
+
+### Demo Scenario: ci-failure-001
 
 | Field | Value |
 |---|---|
 | **Failing test** | `TestRetryBackoffZero` |
-| **Package** | `apps/worker-reconcile` |
-| **Root cause** | `libs/retry/backoff.go` — removed attempt clamp, linear formula yields negative delay |
+| **Root cause** | `libs/retry/backoff.go` — removed attempt clamp |
 | **Error** | `invalid negative backoff delay: -100ms` |
-| **Confidence** | Medium |
-
-### Branches
-
-| Branch | Status |
-|---|---|
-| `demo/baseline` | All tests pass |
-| `demo/ci-failure-001` | `TestRetryBackoffZero` fails |
-
-## Live Demo (GitHub + Cloudflare)
-
-### Prerequisites
-
-```bash
-export GITHUB_TOKEN="ghp_..."
-export SOURCEGRAPH_ACCESS_TOKEN="sgp_..."
-export ANTHROPIC_API_KEY="sk-ant-..."
-```
-
-### Setup
-
-```bash
-# Deploy webhook worker
-npx wrangler deploy
-
-# Configure GitHub webhook on the monorepo:
-#   URL: https://agent-blueprints-demo.<account>.workers.dev/webhook/github
-#   Events: Workflow runs
-#   Secret: <your webhook secret>
-
-# Set worker secrets
-npx wrangler secret put GITHUB_TOKEN
-npx wrangler secret put GITHUB_WEBHOOK_SECRET
-npx wrangler secret put SOURCEGRAPH_ACCESS_TOKEN
-npx wrangler secret put ANTHROPIC_API_KEY
-```
-
-### Run
-
-```bash
-bash demo/run_demo.sh
-```
-
-### Reset
-
-```bash
-bash demo/reset_demo.sh
-```
+| **Branches** | `demo/baseline` (passes) / `demo/ci-failure-001` (fails) |
 
 ## Companion Monorepo
 
-The synthetic monorepo lives at `sg-evals/agent-blueprints-demo-monorepo`:
-
-- 8 Go microservices with realistic cross-service dependencies
-- 6 shared libraries (authz, eventbus, retry, httpclient, featureflags, observability)
-- CI workflow (`.github/workflows/ci-fast.yml`)
-- Deterministic repo generator (`tools/gen_repo`)
-
-## Tests
-
-```bash
-# Run all 47 tests
-npx vitest run
-
-# TypeScript type check
-npx tsc --noEmit
-```
-
-## Sourcegraph Integration
-
-The agent uses two Sourcegraph capabilities:
-
-1. **Deep Search** (`sg_deepsearch`) — semantic, broad investigation
-2. **MCP tools** — precise, symbol-level:
-   - `sg_go_to_definition` — navigate to function definition
-   - `sg_find_references` — find all callers
-   - `sg_read_file` — read source files
-   - `sg_keyword_search` — exact string/regex match
-   - `sg_nls_search` — natural language search
-
-```bash
-# Verify Sourcegraph integration
-export SOURCEGRAPH_ACCESS_TOKEN="sgp_..."
-bash demo/verify_sourcegraph.sh
-```
+[`sg-evals/agent-blueprints-demo-monorepo`](https://github.com/sg-evals/agent-blueprints-demo-monorepo) — 8 Go microservices, 6 shared libraries, CI workflow.

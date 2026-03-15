@@ -7,34 +7,22 @@ FAIL=0
 WARN=0
 
 check() {
-  local desc="$1"
-  local cmd="$2"
+  local desc="$1"; local cmd="$2"
   printf "  %-50s" "$desc"
-  if eval "$cmd" > /dev/null 2>&1; then
-    echo "OK"
-    PASS=$((PASS + 1))
-  else
-    echo "FAIL"
-    FAIL=$((FAIL + 1))
-  fi
+  if eval "$cmd" > /dev/null 2>&1; then echo "OK"; PASS=$((PASS + 1))
+  else echo "FAIL"; FAIL=$((FAIL + 1)); fi
 }
 
 warn_check() {
-  local desc="$1"
-  local cmd="$2"
+  local desc="$1"; local cmd="$2"
   printf "  %-50s" "$desc"
-  if eval "$cmd" > /dev/null 2>&1; then
-    echo "OK"
-    PASS=$((PASS + 1))
-  else
-    echo "WARN (optional)"
-    WARN=$((WARN + 1))
-  fi
+  if eval "$cmd" > /dev/null 2>&1; then echo "OK"; PASS=$((PASS + 1))
+  else echo "WARN (optional for local fallback)"; WARN=$((WARN + 1)); fi
 }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-RUNTIME_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-MONOREPO="${MONOREPO_DIR:-$RUNTIME_DIR/../agent-blueprints-demo-monorepo}"
+AGENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+MONOREPO="${MONOREPO_DIR:-$AGENT_DIR/../agent-blueprints-demo-monorepo}"
 
 echo "=== Agent Blueprints Demo — Preflight Check ==="
 echo ""
@@ -42,11 +30,8 @@ echo ""
 echo "[Tools]"
 check "git installed"                    "git --version"
 check "go installed (1.22+)"            "go version | grep -E 'go1\.(2[2-9]|[3-9])'"
-check "node installed (18+)"            "node --version"
-check "npm installed"                   "npm --version"
-check "curl installed"                  "curl --version"
+warn_check "claude CLI installed"       "command -v claude"
 warn_check "gh CLI installed"           "gh --version"
-warn_check "wrangler installed"         "npx wrangler --version"
 echo ""
 
 echo "[Monorepo: $MONOREPO]"
@@ -58,26 +43,17 @@ check "baseline branch exists"         "cd '$MONOREPO' && git rev-parse demo/bas
 check "ci-failure-001 branch exists"   "cd '$MONOREPO' && git rev-parse demo/ci-failure-001"
 echo ""
 
-echo "[Monorepo: Build & Test]"
-check "go workspace syncs"             "cd '$MONOREPO' && go work sync"
-check "baseline tests pass"            "cd '$MONOREPO' && git checkout demo/baseline 2>/dev/null && bash platform/ci-tools/test-all.sh"
-# Restore to main after test
-git -C "$MONOREPO" checkout main 2>/dev/null || true
-echo ""
-
-echo "[Agent Runtime: $RUNTIME_DIR]"
-check "package.json exists"            "test -f '$RUNTIME_DIR/package.json'"
-check "node_modules installed"         "test -d '$RUNTIME_DIR/node_modules'"
-check "TypeScript compiles"            "cd '$RUNTIME_DIR' && npx tsc --noEmit"
-check "vitest tests pass"              "cd '$RUNTIME_DIR' && npx vitest run --reporter=dot"
-check "wrangler.toml exists"           "test -f '$RUNTIME_DIR/wrangler.toml'"
-check "blueprint.yaml exists"          "test -f '$RUNTIME_DIR/blueprints/ci_failure_investigator/blueprint.yaml'"
+echo "[Agent Runtime: $AGENT_DIR]"
+check ".mcp.json exists"               "test -f '$AGENT_DIR/.mcp.json'"
+check "CLAUDE.md exists"               "test -f '$AGENT_DIR/CLAUDE.md'"
+check "investigate.sh exists"          "test -f '$AGENT_DIR/investigate.sh'"
+check "blueprint.yaml exists"          "test -f '$AGENT_DIR/blueprints/ci_failure_investigator/blueprint.yaml'"
 echo ""
 
 echo "[Credentials]"
-warn_check "GITHUB_TOKEN set"               "test -n '${GITHUB_TOKEN:-}'"
 warn_check "SOURCEGRAPH_ACCESS_TOKEN set"   "test -n '${SOURCEGRAPH_ACCESS_TOKEN:-}'"
 warn_check "ANTHROPIC_API_KEY set"          "test -n '${ANTHROPIC_API_KEY:-}'"
+warn_check "GITHUB_TOKEN set"               "test -n '${GITHUB_TOKEN:-}'"
 echo ""
 
 echo "=== Results ==="
@@ -93,8 +69,8 @@ fi
 
 if [ "$WARN" -gt 0 ]; then
   echo "PREFLIGHT PASSED with warnings."
-  echo "  Warnings are for optional features (live GitHub/Sourcegraph integration)."
-  echo "  The local demo will work without them."
+  echo "  Set SOURCEGRAPH_ACCESS_TOKEN + ANTHROPIC_API_KEY for live MCP investigation."
+  echo "  Without them, the demo shows expected output instead."
 else
-  echo "PREFLIGHT PASSED — ready for demo!"
+  echo "PREFLIGHT PASSED — ready for live demo!"
 fi
