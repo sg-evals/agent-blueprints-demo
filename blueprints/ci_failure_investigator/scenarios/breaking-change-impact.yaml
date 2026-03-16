@@ -1,0 +1,82 @@
+id: breaking-change-impact-001
+name: EventBus Handler signature breaking change
+description: >
+  eventbus.Handler interface signature is mutated in libs/eventbus/eventbus.go,
+  breaking all 4 downstream service implementations. Agent uses sg_find_references
+  to discover every broken caller across the monorepo and produces a structured
+  impact table for developer review.
+
+branch: demo/breaking-change-impact-001
+baseline_branch: demo/baseline
+
+change:
+  file: libs/eventbus/eventbus.go
+  symbol: Handler
+  kind: interface_method_signature
+  description: >
+    Handler.Handle(ctx context.Context, event Event) error
+    changed to
+    Handler.Handle(ctx context.Context, event Event, meta Metadata) error
+    — adds required Metadata parameter, breaking all existing implementations.
+
+expected:
+  root_cause:
+    file: libs/eventbus/eventbus.go
+    symbol: Handler
+    description: >
+      The Handler interface gained a mandatory Metadata parameter on Handle().
+      All service implementations satisfy the old interface and now fail to
+      compile because they are missing the new parameter.
+
+  broken_implementations:
+    - service: orders-service
+      file: apps/orders-service/handler.go
+      symbol: OrderHandler
+      error: "cannot use OrderHandler as type eventbus.Handler: missing method Handle"
+
+    - service: notifications-service
+      file: apps/notifications-service/handler.go
+      symbol: NotificationHandler
+      error: "cannot use NotificationHandler as type eventbus.Handler: missing method Handle"
+
+    - service: worker-ingest
+      file: apps/worker-ingest/ingest.go
+      symbol: IngestHandler
+      error: "cannot use IngestHandler as type eventbus.Handler: missing method Handle"
+
+    - service: worker-reconcile
+      file: apps/worker-reconcile/reconcile.go
+      symbol: ReconcileHandler
+      error: "cannot use ReconcileHandler as type eventbus.Handler: missing method Handle"
+
+  impact_table: |
+    | Service              | File                                    | Symbol            | Status  |
+    |----------------------|-----------------------------------------|-------------------|---------|
+    | orders-service       | apps/orders-service/handler.go          | OrderHandler      | BROKEN  |
+    | notifications-service| apps/notifications-service/handler.go   | NotificationHandler| BROKEN |
+    | worker-ingest        | apps/worker-ingest/ingest.go            | IngestHandler     | BROKEN  |
+    | worker-reconcile     | apps/worker-reconcile/reconcile.go      | ReconcileHandler  | BROKEN  |
+
+  suggested_fix: >
+    Update all 4 Handler.Handle implementations to accept the new Metadata
+    parameter: func (h *XHandler) Handle(ctx context.Context, event eventbus.Event,
+    meta eventbus.Metadata) error. Each service can ignore meta if not needed.
+
+  confidence: high
+
+  relevant_files:
+    - libs/eventbus/eventbus.go
+    - apps/orders-service/handler.go
+    - apps/notifications-service/handler.go
+    - apps/worker-ingest/ingest.go
+    - apps/worker-reconcile/reconcile.go
+
+  sourcegraph_queries:
+    find_references:
+      repo: github.com/sg-evals/agent-blueprints-demo-monorepo
+      file: libs/eventbus/eventbus.go
+      symbol: Handler
+    keyword_search:
+      - "eventbus.Handler"
+      - "Handle(ctx"
+      - "implements.*Handler"

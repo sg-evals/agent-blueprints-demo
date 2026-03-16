@@ -64,8 +64,21 @@ workflow:
       references: list
       file_contents: list
 
+  - step: find_references
+    description: >
+      Use sg_find_references to locate every downstream caller of changed
+      symbols, revealing the full blast radius of interface or signature changes.
+    action: sourcegraph.mcp_find_references
+    params:
+      repo: "{{ inputs.repo }}"
+      file: "{{ steps.deepsearch_investigation.relevant_files[0] }}"
+      symbol: "{{ steps.deepsearch_investigation.relevant_symbols[0] }}"
+    outputs:
+      callers: list          # all files + line numbers that reference the symbol
+      broken_services: list  # services whose implementations no longer satisfy the interface
+
   - step: compose_output
-    description: Generate the investigation summary
+    description: Generate the investigation summary and impact report
     action: llm.investigate
     params:
       failing_test: "{{ steps.summarize_failure.test_name }}"
@@ -73,11 +86,14 @@ workflow:
       relevant_files: "{{ steps.mcp_expand_symbols.file_contents }}"
       deep_search_summary: "{{ steps.deepsearch_investigation.summary }}"
       symbol_definitions: "{{ steps.mcp_expand_symbols.definitions }}"
+      symbol_callers: "{{ steps.find_references.callers }}"
+      broken_services: "{{ steps.find_references.broken_services }}"
     outputs:
       root_cause: string
       suggested_fix: string
       confidence: string
       relevant_file_paths: list
+      impact_table: string   # markdown table of all affected services and files
 
   - step: publish_github_comment
     description: Post the investigation results as a GitHub commit comment
@@ -88,8 +104,9 @@ workflow:
 
 outputs:
   github_comment: true
+  impact_report: true
   format: markdown
 
 metadata:
   author: agent-blueprints
-  tags: [ci, testing, investigation, go]
+  tags: [ci, testing, investigation, go, breaking-change, cross-repo]
