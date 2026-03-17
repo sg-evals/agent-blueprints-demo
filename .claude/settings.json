@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Write",
+      "Grep",
+      "Glob",
+      "mcp__sourcegraph__sg_keyword_search",
+      "mcp__sourcegraph__sg_nls_search",
+      "mcp__sourcegraph__sg_read_file",
+      "mcp__sourcegraph__sg_list_files",
+      "mcp__sourcegraph__sg_go_to_definition",
+      "mcp__sourcegraph__sg_find_references",
+      "mcp__sourcegraph__sg_commit_search",
+      "mcp__sourcegraph__sg_deepsearch"
+    ],
+    "deny": []
+  }
+}

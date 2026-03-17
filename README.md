@@ -7,107 +7,89 @@ When a test fails in CI, the agent automatically:
 2. Traces the failing test to its root cause
 3. Posts an investigation report as a GitHub comment
 
-## Architecture
+---
+
+## Quick Start (Self-Hosted Runner)
+
+> **This is the recommended path.** Your API keys stay on your machine — no GitHub Secrets required.
+
+**1. Run setup:**
+
+```bash
+cd ~/your-workspace
+git clone https://github.com/sg-evals/agent-blueprints-demo.git
+cd agent-blueprints-demo
+bash demo/setup.sh
+```
+
+`setup.sh` will:
+- Clone the companion monorepo (if not present)
+- Check all prerequisites
+- Verify your tokens work
+- Optionally register the self-hosted runner
+
+**2. Run the demo:**
+
+```bash
+./demo/run_demo.sh
+```
+
+That's it. The demo triggers CI, waits for the agent to investigate, and prints the
+root-cause comment. Expected time: **2–5 minutes** (CI ~30s + trigger delay ~60s + investigation ~90s).
+
+Monitor live at: https://github.com/sg-evals/agent-blueprints-demo-monorepo/actions
+
+---
+
+## Prerequisites
+
+| Tool | Version | Install |
+|------|---------|---------|
+| Go | 1.22+ | https://go.dev/dl |
+| Node.js | 18+ | https://nodejs.org |
+| claude CLI | latest | `npm install -g @anthropic-ai/claude-code` |
+| gh CLI | any | https://cli.github.com |
+
+**Tokens required** (see `demo/.env.example`):
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."          # console.anthropic.com
+export SOURCEGRAPH_ACCESS_TOKEN="sgp_..."      # sourcegraph.com → User Settings → Access tokens
+export GITHUB_TOKEN="ghp_..."                  # Settings → Developer settings → Personal access tokens
+                                               # Scopes: repo (full), workflow
+```
+
+You also need **push access** to `sg-evals/agent-blueprints-demo-monorepo`. Ask a team admin if you get a 403.
+
+---
+
+## Full Demo Guide
+
+See **[DEMO_GUIDE.md](demo/DEMO_GUIDE.md)** for:
+- Step-by-step walkthrough
+- Troubleshooting common issues
+- Running individual pieces separately
+
+See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for system design and the `workflow_run` trigger gotcha.
+
+---
+
+## How It Works
 
 ```
 CI fails (GitHub Actions)
     │
     ▼
-investigate.yml triggers
+investigate.yml triggers on your self-hosted runner
     │
     ▼
-Claude Code agent launches
-    │  with .mcp.json → Sourcegraph MCP server
-    │
-    ├── sg_keyword_search  → find the failing test
-    ├── sg_read_file       → read test + implementation
-    ├── sg_go_to_definition → trace the code under test
-    ├── sg_commit_search   → find what changed
+Claude Code agent + Sourcegraph MCP investigates
     │
     ▼
-investigation_output.md → GitHub commit comment
+Root-cause analysis posted as GitHub commit comment
 ```
 
-No custom infrastructure. No Cloudflare. The agent is Claude Code with Sourcegraph MCP configured via `.mcp.json`.
-
-## Quick Start
-
-```bash
-# Run the demo (with or without credentials)
-bash demo/local_demo.sh
-
-# Run a live investigation
-export SOURCEGRAPH_ACCESS_TOKEN="sgp_..."
-export ANTHROPIC_API_KEY="sk-ant-..."
-
-./investigate.sh \
-  --repo sg-evals/agent-blueprints-demo-monorepo \
-  --test TestRetryBackoffZero \
-  --error "invalid negative backoff delay: -100ms"
-```
-
-## Files
-
-```
-agent-blueprints-demo/
-├── .mcp.json              # Sourcegraph MCP server config
-├── CLAUDE.md              # Agent investigation instructions
-├── investigate.sh         # Launches Claude Code with MCP
-├── blueprints/
-│   └── ci_failure_investigator/
-│       ├── blueprint.yaml     # Declarative workflow definition
-│       └── scenarios/         # Deterministic test scenarios
-└── demo/
-    ├── local_demo.sh      # Full local demo
-    ├── preflight.sh       # Prerequisite checker
-    ├── run_demo.sh        # Live demo (pushes to GitHub)
-    └── reset_demo.sh      # Reset demo state
-```
-
-## How It Works
-
-### MCP Configuration (`.mcp.json`)
-
-```json
-{
-  "mcpServers": {
-    "sourcegraph": {
-      "type": "http",
-      "url": "https://sourcegraph.sourcegraph.com/.api/mcp/v1",
-      "headers": { "Authorization": "token ${SOURCEGRAPH_ACCESS_TOKEN}" }
-    }
-  }
-}
-```
-
-This gives Claude Code access to all Sourcegraph MCP tools:
-- `mcp__sourcegraph__sg_keyword_search` — exact symbol search
-- `mcp__sourcegraph__sg_nls_search` — semantic search
-- `mcp__sourcegraph__sg_read_file` — read indexed files
-- `mcp__sourcegraph__sg_go_to_definition` — symbol navigation
-- `mcp__sourcegraph__sg_find_references` — cross-repo references
-- `mcp__sourcegraph__sg_commit_search` — git history
-
-### Automated CI Trigger
-
-The monorepo has `.github/workflows/investigate.yml` that fires when CI fails:
-
-```
-workflow_run (CI Fast, completed, failure)
-  → checkout agent-blueprints-demo
-  → extract failing test from CI logs
-  → run investigate.sh with Claude Code + MCP
-  → post investigation as GitHub commit comment
-```
-
-### Demo Scenario: ci-failure-001
-
-| Field | Value |
-|---|---|
-| **Failing test** | `TestRetryBackoffZero` |
-| **Root cause** | `libs/retry/backoff.go` — removed attempt clamp |
-| **Error** | `invalid negative backoff delay: -100ms` |
-| **Branches** | `demo/baseline` (passes) / `demo/ci-failure-001` (fails) |
+The runner is your laptop. API keys never leave your machine.
 
 ## Companion Monorepo
 

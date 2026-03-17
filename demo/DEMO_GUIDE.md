@@ -23,7 +23,14 @@ on your laptop using a self-hosted GitHub Actions runner — no GitHub secrets r
 
 ### Environment variables
 
-Export these in your shell (add to `~/.bashrc` or `~/.zshrc` for persistence):
+Copy `demo/.env.example` to `demo/.env` and fill in your values:
+
+```bash
+cp demo/.env.example demo/.env
+# Edit demo/.env with your credentials
+```
+
+Or export in your shell (add to `~/.bashrc` or `~/.zshrc` for persistence):
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."          # Anthropic Console: console.anthropic.com
@@ -37,51 +44,62 @@ export GITHUB_TOKEN="ghp_..."                  # GitHub: Settings → Developer 
 
 ### Repo access
 
-You need push access to `sg-evals/agent-blueprints-demo-monorepo`. Ask a team admin to add you
-as a collaborator if you get a 403 when pushing.
+You need push access to `sg-evals/agent-blueprints-demo-monorepo`. `preflight.sh` checks
+this automatically. Ask a team admin to add you as a collaborator if you get a 403 when pushing.
 
 ---
 
 ## 5-Minute Setup
 
-### Step 1: Clone both repos
+### Step 1: Run setup
 
 ```bash
 cd ~  # or wherever you keep projects
-
 git clone https://github.com/sg-evals/agent-blueprints-demo.git
-git clone https://github.com/sg-evals/agent-blueprints-demo-monorepo.git
-```
-
-### Step 2: Run the preflight check
-
-```bash
 cd agent-blueprints-demo
-./demo/preflight.sh
+bash demo/setup.sh
 ```
 
-All checks should pass. Fix any `FAIL` items before continuing. `WARN` items are
-optional for the self-hosted flow.
+`setup.sh` will:
+- Clone the companion monorepo if it's not already present (both repos must be siblings)
+- Validate the directory layout
+- Run preflight checks — fix any `FAIL` items before continuing
+- Optionally register the runner (or let `run_demo.sh` do it automatically)
 
-### Step 3: Run the demo
+### Step 2: Run the demo
 
 ```bash
-./demo/run_demo.sh --self-hosted
+./demo/run_demo.sh
 ```
 
-This script:
-1. Starts a self-hosted runner on your laptop (background process)
-2. Pushes the `demo/ci-failure-001` branch as `demo/trigger-<timestamp>`
-3. Waits for the investigation comment to appear on the commit
-4. Tears down the runner when done
+The runner starts automatically, the trigger branch is pushed, and the script polls
+for the investigation comment. When it appears, the comment text is printed.
 
-### Step 4: Watch it run
+---
 
-Open the Actions tab while the demo runs:
-- **CI Fast** runs on `ubuntu-latest` — will fail in ~30 seconds
-- **Investigate CI Failure** runs on your self-hosted runner — posts a comment in ~60-90 seconds
+## Timing
 
-The commit comment will look like:
+Wall-clock time from running `run_demo.sh` to seeing the comment:
+
+| Phase | Typical time |
+|-------|-------------|
+| Runner starts and connects | ~5s |
+| CI Fast runs on ubuntu-latest | ~30s |
+| `workflow_run` trigger delay (GitHub) | ~30–60s |
+| Agent investigates (Claude + MCP) | ~60–120s |
+| **Total** | **2–4 minutes** |
+
+During the demo, `run_demo.sh` shows which phase is active. Open the Actions tab to watch live:
+
+```
+https://github.com/sg-evals/agent-blueprints-demo-monorepo/actions
+```
+
+---
+
+## What You'll See
+
+The commit comment looks like:
 
 ```
 ## Automated Investigation
@@ -127,9 +145,33 @@ cd ../agent-blueprints-demo
 ./demo/teardown_runner.sh
 ```
 
+### Clean up trigger branches
+
+```bash
+./demo/reset_demo.sh          # Bulk cleanup of demo/trigger-* branches
+```
+
 ---
 
 ## Troubleshooting
+
+### workflow_run trigger never fires
+
+**This is the most common silent failure.** `workflow_run` **only fires from the
+workflow file on the default branch** (`main`). If `investigate.yml` hasn't been
+pushed to `main` in the monorepo, the trigger silently never fires — even when
+CI Fast fails.
+
+**Check:**
+```bash
+gh api "repos/sg-evals/agent-blueprints-demo-monorepo/contents/.github/workflows/investigate.yml" \
+  --jq '.content' | base64 -d | grep "runs-on"
+```
+
+Should show `runs-on: [self-hosted, demo-runner]`. If not, push the updated workflow
+to the main branch of the monorepo first.
+
+`preflight.sh` checks this automatically.
 
 ### Runner won't connect
 
@@ -161,17 +203,12 @@ curl -s -H "Authorization: Bearer $SOURCEGRAPH_ACCESS_TOKEN" \
 - Token doesn't have `read` scope on Sourcegraph → create a new token with correct scopes
 - `ANTHROPIC_API_KEY` expired or quota exhausted → check console.anthropic.com
 
-### investigate workflow not triggering
+### No push access to monorepo
 
-**Symptom:** CI Fast fails but `Investigate CI Failure` workflow never appears.
+**Symptom:** `git push` fails with `remote: Repository not found` or 403.
 
-**Causes:**
-- Workflow file uses `ubuntu-latest` runner (not updated yet) → check `.github/workflows/investigate.yml` has `runs-on: [self-hosted, demo-runner]`
-- Runner is offline when CI Fast completes — GitHub won't re-queue the triggered workflow → push another trigger branch
-
-### "Remote: Repository not found" when pushing
-
-You need push access to `sg-evals/agent-blueprints-demo-monorepo`. Ask a team admin.
+`preflight.sh` checks your collaborator permission level before you hit this at push time.
+Ask a team admin to add you to `sg-evals/agent-blueprints-demo-monorepo` with write access.
 
 ### Runner registered but no jobs picked up
 
@@ -194,19 +231,5 @@ gh api "repos/sg-evals/agent-blueprints-demo-monorepo/actions/runners" --jq '.ru
 
 ## Architecture Reference
 
-```
-Your laptop
-├── ~/.github-runner-demo/       # Runner binary + config (setup_runner.sh)
-├── agent-blueprints-demo/       # Agent runtime (investigate.sh, CLAUDE.md, MCP config)
-└── agent-blueprints-demo-monorepo/  # Target Go monorepo
-
-GitHub
-├── sg-evals/agent-blueprints-demo-monorepo
-│   └── .github/workflows/
-│       ├── ci-fast.yml          # Runs on ubuntu-latest, fails the test
-│       └── investigate.yml      # Runs on self-hosted (your laptop)
-└── Runner connection
-    └── Your laptop ←→ api.github.com (outbound HTTPS only)
-```
-
-API keys never leave your machine. The runner inherits them from your shell environment.
+See [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) for system design, file layout, and
+the full explanation of the `workflow_run` trigger gotcha.

@@ -5,7 +5,7 @@ dist/
 
 # Gas Town (added by gt)
 .runtime/
-.claude/
+.claude/commands/
 .logs/
 __pycache__/
 state.json
